@@ -6,6 +6,7 @@ from rest_framework.test import APIClient
 from django.test import TestCase
 from django.utils import timezone
 
+import appointment
 from .models import Appointment
 from .serializers import AppointmentSerializer
 from barbers.models import Barber
@@ -351,3 +352,217 @@ class AppointmentStatusTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.appointment.refresh_from_db()
         self.assertEqual(self.appointment.status, 'CANCELED')
+
+
+class AppointmentCreationTest(TestCase):
+
+    def setUp(self):
+        self.client = APIClient()
+
+        self.customer = User.objects.create_user(
+            email='customer@test.com',
+            password='password123',
+            first_name='John',
+            last_name='Doe',
+            phone_number='6912345678'
+        )
+
+        self.other_customer = User.objects.create_user(
+            email='other@test.com',
+            password='password123',
+            first_name='Jane',
+            last_name='Doe',
+            phone_number='6912345679'
+        )
+
+        self.barber_user = User.objects.create_user(
+            email='barber@test.com',
+            password='password123',
+            first_name='Mike',
+            last_name='Barber',
+            phone_number='6912345680'
+        )
+
+        self.barber = Barber.objects.create(
+            user=self.barber_user,
+        )
+
+        self.service = Service.objects.create(
+            name='Haircut',
+            price=15.00,
+            duration=30,
+        )
+
+        self.barber.services.add(self.service)
+
+        self.other_service = Service.objects.create(
+            name='Beard Trim',
+            price=10.00,
+            duration=20,
+        )
+
+        self.schedule = WorkingSchedule.objects.create(
+            barber=self.barber,
+            day_of_the_week=0,
+            start_time=time(9, 0),
+            end_time=time(17, 0),
+        )
+
+    def test_customer_can_create_appointment(self):
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+        self.assertEqual(appointment.barber, self.barber)
+        self.assertEqual(appointment.service, self.service)
+        self.assertEqual(appointment.status, 'PENDING')
+
+
+    def test_unauthenticated_customer_cannot_create_appointment(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+    def test_barber_does_not_provide_selected_service(self):
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.other_service.id,
+                'start_time': '2026-09-21T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_barber_does_not_work_that_day(self):
+        self.client.force_authenticate(user=self.customer)
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-23T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_appointment_outside_work_hours(self):
+        self.client.force_authenticate(user=self.customer)
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T20:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_appointment_overlaps_another_appointment(self):
+        self.client.force_authenticate(user=self.customer)
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+        self.assertEqual(appointment.barber, self.barber)
+        self.assertEqual(appointment.service, self.service)
+        self.assertEqual(appointment.status, 'PENDING')
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:10:00+03:00',
+            },
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_appointment_exactly_adjacent_to_another_appointment(self):
+        self.client.force_authenticate(user=self.customer)
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+        self.assertEqual(appointment.barber, self.barber)
+        self.assertEqual(appointment.service, self.service)
+        self.assertEqual(appointment.status, 'PENDING')
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:30:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        next_appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(next_appointment.customer, self.customer)
+        self.assertEqual(next_appointment.barber, self.barber)
+        self.assertEqual(next_appointment.service, self.service)
+        self.assertEqual(next_appointment.status, 'PENDING')
+
+
+    def test_appointment_exceeds_barber_working_hours(self):
+        self.client.force_authenticate(user=self.customer)
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T16:55:00+03:00',
+            },
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

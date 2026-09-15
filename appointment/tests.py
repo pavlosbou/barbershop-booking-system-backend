@@ -196,6 +196,8 @@ class AppointmentStatusTest(TestCase):
             status='PENDING'
         )
 
+        # print("SETUP STATUS:", self.appointment.status)
+
     def test_customer_can_cancel_appointment(self):
         self.client.force_authenticate(user=self.customer)
 
@@ -235,7 +237,7 @@ class AppointmentStatusTest(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.other_customer.refresh_from_db()
+        self.appointment.refresh_from_db()
         self.assertEqual(self.appointment.status, 'PENDING')
 
     def test_barber_can_confirm_appointment(self):
@@ -254,9 +256,19 @@ class AppointmentStatusTest(TestCase):
     def test_barber_can_complete_appointment(self):
         self.client.force_authenticate(user=self.barber_user)
 
+        # First confirm
         response = self.client.patch(
             f'/api/appointment/{self.appointment.id}/status/',
-            {'status':'COMPLETED'},
+            {'status': 'CONFIRMED'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Then complete
+        response = self.client.patch(
+            f'/api/appointment/{self.appointment.id}/status/',
+            {'status': 'COMPLETED'},
             format='json'
         )
 
@@ -276,3 +288,66 @@ class AppointmentStatusTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.appointment.refresh_from_db()
         self.assertEqual(self.appointment.status, 'PENDING')
+
+    def test_appointment_cannot_be_completed_from_pending(self):
+        self.client.force_authenticate(user=self.barber_user)
+        # print(self.appointment.status)
+        response = self.client.patch(
+            f'/api/appointment/{self.appointment.id}/status/',
+            {'status': 'COMPLETED'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, 'PENDING')
+
+    def test_completed_appointment_cannot_be_canceled(self):
+        self.client.force_authenticate(user=self.barber_user)
+
+        response = self.client.patch(
+            f'/api/appointment/{self.appointment.id}/status/',
+            {'status':'CONFIRMED'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.patch(
+            f'/api/appointment/{self.appointment.id}/status/',
+            {'status':'COMPLETED'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.patch(
+            f'/api/appointment/{self.appointment.id}/status/',
+            {'status':'CANCELED'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, 'COMPLETED')
+
+    def test_canceled_appointment_cannot_be_confirmed(self):
+        self.client.force_authenticate(user=self.barber_user)
+
+        response = self.client.patch(
+            f'/api/appointment/{self.appointment.id}/status/',
+            {'status':'CANCELED'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.patch(
+            f'/api/appointment/{self.appointment.id}/status/',
+            {'status':'CONFIRMED'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, 'CANCELED')

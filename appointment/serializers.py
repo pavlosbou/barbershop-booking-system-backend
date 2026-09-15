@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from datetime import timedelta
 
+from rest_framework.exceptions import PermissionDenied
+
 import appointment
 from appointment.models import Appointment
 from barbers.models import Barber
@@ -56,6 +58,41 @@ class AppointmentSerializer(serializers.ModelSerializer):
 
 
 class AppointmentStatusSerializer(serializers.ModelSerializer):
+
+    def validate_status(self, status):
+
+        current_status = self.instance.status
+
+        if current_status == 'PENDING':
+            if status != 'CONFIRMED' and status != 'CANCELED':
+                raise serializers.ValidationError('A pending appointment can only be confirmed or canceled')
+
+        if current_status == 'COMPLETED':
+            if status == 'CANCELED':
+                raise serializers.ValidationError('A completed appointment cannot be canceled')
+
+        if current_status == 'CANCELED':
+            if status == 'CONFIRMED':
+                raise serializers.ValidationError('A canceled appointment cannot be confirmed')
+
+        return status
+
+    def validate(self, attrs):
+        appointment = self.instance
+        user = self.context['request'].user
+        new_status = attrs.get('status')
+
+        is_customer = appointment.customer == user
+        is_barber = appointment.barber.user == user
+
+        if not is_customer and not is_barber:
+            raise PermissionDenied({'status': "You cannot modify the appointment!"})
+
+        if is_customer and new_status != 'CANCELED':
+            raise serializers.ValidationError('You can only cancel this appointment')
+
+        return attrs
+
     class Meta:
         model = Appointment
         fields = ('status',)

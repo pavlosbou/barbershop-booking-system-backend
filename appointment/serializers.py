@@ -38,7 +38,10 @@ class AppointmentSerializer(serializers.ModelSerializer):
 
 
         end_time_to_compare = start_time + timedelta(minutes=service.duration)
-        existing_appointments = Appointment.objects.filter(barber=barber)
+        existing_appointments = Appointment.objects.filter(
+            barber=barber,
+            status__in=['PENDING', 'CONFIRMED'],
+        )
 
 
         for existing_appointment in existing_appointments:
@@ -54,7 +57,10 @@ class AppointmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
         fields = '__all__'
-        read_only_fields = ('customer', 'status')
+        read_only_fields = ('status',)
+        extra_kwargs = {
+            'customer': {'required': False},
+        }
 
 
 class AppointmentStatusSerializer(serializers.ModelSerializer):

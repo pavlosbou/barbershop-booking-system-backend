@@ -53,8 +53,8 @@ class AppointmentSerializerTest(TestCase):
         }
 
         serializer = AppointmentSerializer(data=data)
-
-        self.assertTrue(serializer.is_valid())
+        is_valid = serializer.is_valid()
+        self.assertTrue(is_valid)
 
     def test_before_working_hours(self):
         data = {
@@ -408,6 +408,25 @@ class AppointmentCreationTest(TestCase):
             end_time=time(17, 0),
         )
 
+        self.other_barber_user = User.objects.create(
+            email='other_barber@test.com',
+            password='password123',
+            first_name='John',
+            last_name='Barber',
+            phone_number='6912345689'
+        )
+        self.other_barber = Barber.objects.create(
+            user=self.other_barber_user,
+        )
+        self.other_barber.services.add(self.other_service)
+
+        self.schedule = WorkingSchedule.objects.create(
+            barber=self.other_barber,
+            day_of_the_week=0,
+            start_time=time(9, 0),
+            end_time=time(17, 0),
+        )
+
     def test_customer_can_create_appointment(self):
         self.client.force_authenticate(user=self.customer)
 
@@ -566,3 +585,210 @@ class AppointmentCreationTest(TestCase):
             format='json'
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+    def test_barber_can_create_appointment_for_a_customer(self):
+        self.client.force_authenticate(user=self.barber.user)
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'customer': self.customer.id,
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T16:00:00+03:00',
+            },
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+
+    def test_customer_cannot_create_appointment_for_another_customer(self):
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'customer': self.other_customer.id,
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_customers_can_create_appointment_for_themselves(self):
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'customer': self.customer.id,
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+        self.assertEqual(appointment.barber, self.barber)
+        self.assertEqual(appointment.service, self.service)
+        self.assertEqual(appointment.status, 'PENDING')
+
+
+    def test_create_appointment_when_overlapping_is_canceled_from_pending(self):
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+        self.assertEqual(appointment.barber, self.barber)
+        self.assertEqual(appointment.service, self.service)
+        self.assertEqual(appointment.status, 'PENDING')
+
+        response = self.client.patch(
+            f'/api/appointment/{appointment.id}/status/',
+            {'status': 'CANCELED'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # self.appointment.refresh_from_db()
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:05:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+        self.assertEqual(appointment.barber, self.barber)
+        self.assertEqual(appointment.service, self.service)
+        self.assertEqual(appointment.status, 'PENDING')
+
+
+    def test_create_appointment_when_overlapping_is_cancelled_from_confirmed(self):
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+        self.assertEqual(appointment.barber, self.barber)
+        self.assertEqual(appointment.service, self.service)
+        self.assertEqual(appointment.status, 'PENDING')
+
+        self.client.force_authenticate(user=self.barber.user)
+
+        response = self.client.patch(
+            f'/api/appointment/{appointment.id}/status/',
+            {'status': 'CONFIRMED'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.patch(
+            f'/api/appointment/{appointment.id}/status/',
+            {'status': 'CANCELED'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:05:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+        self.assertEqual(appointment.barber, self.barber)
+        self.assertEqual(appointment.service, self.service)
+        self.assertEqual(appointment.status, 'PENDING')
+
+    def test_barber_can_retrieve_appointments(self):
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.barber.id,
+                'service': self.service.id,
+                'start_time': '2026-09-21T12:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+        self.assertEqual(appointment.barber, self.barber)
+        self.assertEqual(appointment.service, self.service)
+        self.assertEqual(appointment.status, 'PENDING')
+
+        response = self.client.post(
+            f'/api/appointment/',
+            {
+                'barber': self.other_barber.id,
+                'service': self.other_service.id,
+                'start_time': '2026-09-21T13:00:00+03:00',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        appointment = Appointment.objects.get(id=response.data['id'])
+        self.assertEqual(appointment.customer, self.customer)
+        self.assertEqual(appointment.barber, self.other_barber)
+        self.assertEqual(appointment.service, self.other_service)
+        self.assertEqual(appointment.status, 'PENDING')
+
+        self.client.force_authenticate(user=self.barber.user)
+
+        response = self.client.get(
+            f'/api/appointment/',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        print(response.data)

@@ -3,6 +3,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
 from appointment.models import Appointment
+from barbers.models import Barber
 from appointment.serializers import AppointmentSerializer, AppointmentStatusSerializer
 
 
@@ -12,10 +13,23 @@ class AppointmentList(generics.ListCreateAPIView):
     serializer_class = AppointmentSerializer
 
     def get_queryset(self):
+        if Barber.objects.filter(user=self.request.user).exists():
+            barber = Barber.objects.get(user=self.request.user)
+            return Appointment.objects.filter(barber=barber)
+
         return Appointment.objects.filter(customer=self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(customer=self.request.user)
+
+        if Barber.objects.filter(user=self.request.user).exists():
+            serializer.save()
+        else:
+            customer = serializer.validated_data.get('customer')
+
+            if customer and self.request.user != customer:
+                raise serializers.ValidationError({'detail': 'You can create appointments only for yourself'})
+
+            serializer.save(customer=self.request.user)
 
 
 class AppointmentStatusUpdate(generics.UpdateAPIView):

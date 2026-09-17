@@ -36,3 +36,12 @@ class AppointmentStatusUpdate(generics.UpdateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     queryset = Appointment.objects.all()
     serializer_class = AppointmentStatusSerializer
+
+class AppointmentDetail(generics.RetrieveAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AppointmentSerializer
+
+    def get_queryset(self):
+        if Barber.objects.filter(user=self.request.user).exists():
+            return Appointment.objects.filter(barber__user=self.request.user)
+        return Appointment.objects.filter(customer=self.request.user)

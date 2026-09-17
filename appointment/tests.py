@@ -791,4 +791,138 @@ class AppointmentCreationTest(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        print(response.data)
+
+
+class AppointmentRetrievalTest(TestCase):
+
+    def setUp(self):
+        self.client = APIClient()
+
+        # Users
+        self.customer = User.objects.create_user(
+            email='customer@example.com',
+            password='testpass123',
+            first_name='John',
+            last_name='Customer',
+            phone_number='6900000000'
+        )
+
+        self.other_customer = User.objects.create_user(
+            email='othercustomer@example.com',
+            password='testpass123',
+            first_name='Jane',
+            last_name='Other',
+            phone_number='6900000001'
+        )
+
+        self.barber_user = User.objects.create_user(
+            email='barber@example.com',
+            password='testpass123',
+            first_name='Bob',
+            last_name='Barber',
+            phone_number='6900000002'
+        )
+
+        self.other_barber_user = User.objects.create_user(
+            email='otherbarber@example.com',
+            password='testpass123',
+            first_name='Mike',
+            last_name='Other',
+            phone_number='6900000003'
+        )
+
+        # Services
+        self.service = Service.objects.create(
+            name='Haircut',
+            price=15.00,
+            duration=30
+        )
+
+        self.other_service = Service.objects.create(
+            name='Beard Trim',
+            price=10.00,
+            duration=20
+        )
+
+        # Barbers
+        self.barber = Barber.objects.create(
+            user=self.barber_user,
+            bio='Main barber'
+        )
+        self.barber.services.add(self.service)
+
+        self.other_barber = Barber.objects.create(
+            user=self.other_barber_user,
+            bio='Other barber'
+        )
+        self.other_barber.services.add(self.other_service)
+
+        # Working schedules
+        self.schedule = WorkingSchedule.objects.create(
+            barber=self.barber,
+            day_of_the_week=0,  # Monday
+            start_time='09:00',
+            end_time='15:00'
+        )
+
+        self.other_schedule = WorkingSchedule.objects.create(
+            barber=self.other_barber,
+            day_of_the_week=0,  # Monday
+            start_time='09:00',
+            end_time='15:00'
+        )
+
+        # Appointments
+        self.appointment = Appointment.objects.create(
+            customer=self.customer,
+            barber=self.barber,
+            service=self.service,
+            start_time='2026-09-21T12:00:00+03:00',
+            status='PENDING'
+        )
+
+        self.other_appointment = Appointment.objects.create(
+            customer=self.other_customer,
+            barber=self.other_barber,
+            service=self.other_service,
+            start_time='2026-09-21T13:00:00+03:00',
+            status='PENDING'
+        )
+
+    def test_customer_can_retrieve_own_appointment(self):
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.get(
+            f'/api/appointment/{self.appointment.id}/',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+    def test_customer_cannot_retrieve_other_customer_appointment(self):
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.get(
+            f'/api/appointment/{self.other_appointment.id}/',
+        )
+
+        #404 and not 401 because we don't want a malicious user to know that the other appointment exist
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_barber_can_retrieve_own_appointment(self):
+        self.client.force_authenticate(user=self.barber.user)
+
+        response = self.client.get(
+            f'/api/appointment/{self.appointment.id}/',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_barber_cannot_retrieve_other_barber_appointment(self):
+        self.client.force_authenticate(user=self.barber.user)
+
+        response = self.client.get(
+            f'/api/appointment/{self.other_appointment.id}/',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

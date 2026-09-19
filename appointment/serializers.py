@@ -1,11 +1,13 @@
 from rest_framework import serializers
 from datetime import timedelta
+from django.utils import timezone
 
 from rest_framework.exceptions import PermissionDenied
 
 import appointment
 from appointment.models import Appointment
 from barbers.models import Barber
+from services.serializers import AppointmentAvailabilityServiceSerializer
 from working_schedule.models import WorkingSchedule
 
 
@@ -102,3 +104,18 @@ class AppointmentStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
         fields = ('status',)
+
+
+class AppointmentAvailabilitySerializer(serializers.ModelSerializer):
+    end_time = serializers.SerializerMethodField()
+    service =  AppointmentAvailabilityServiceSerializer(read_only=True)
+
+    def get_end_time(self, obj):
+        end_time = obj.start_time + timedelta(minutes=obj.service.duration)
+
+        return timezone.localtime(end_time).isoformat()
+
+
+    class Meta:
+        model = Appointment
+        fields = ('id','start_time', 'end_time', 'service')
